@@ -77,6 +77,12 @@
     "type": "string",
     "default": "wechat_robot"
   },
+  "send_test_now": {
+    "description": "发送测试消息",
+    "hint": "保存为开并保存/重载后，立即向 notify_targets 发一条测试提醒；发完自动关。也可在插件视图点按钮，或微信发 #水电测试 / #电费测试。",
+    "type": "bool",
+    "default": false
+  },
   "quiet_start_hour": {
     "description": "静默开始小时（含，0-23）",
     "hint": "默认 0。落在静默区间的提醒会推迟到 quiet_end_hour，不丢弃。",

@@ -1,9 +1,9 @@
 name: astrbot_plugin_dorm_utility
 display_name: 宿舍水电
-desc: 微信指令查询宿舍水电；支持面板可配的定时余额不足提醒（LackBalance 高低频查询、静默时段推迟）。
+desc: 微信指令查询宿舍水电；定时余额不足提醒；面板/指令可一键发送测试消息。
 short_desc: 宿舍水电查询与余额提醒
 author: CyL-Cly
-version: 0.2.0
+version: 0.2.1
 repo: https://github.com/CyL-Cly/astrbot_plugin_dorm_utility
 astrbot_version: ">=4.0.0"
 support_platforms:

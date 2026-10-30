@@ -1,6 +1,6 @@
 # astrbot_plugin_dorm_utility（宿舍水电）
 
-在微信（或其他 AstrBot 平台）发送 `#电费` / `#水电`，查询宿舍水电余量与今日用量；可选**定时余额不足提醒**。
+在微信（或其他 AstrBot 平台）发送 `#电费` / `#水电`，查询宿舍水电余量与今日用量；可选**定时余额不足提醒**；支持面板/视图/指令**一键发送测试消息**。
 
 数据来自 [water-monitor](https://tools.rainfog.top/water-monitor)；**凭证、宿舍、提醒目标均可在 AstrBot 插件面板更新**，无需改代码。
 
@@ -30,6 +30,7 @@
 | `daily_query_hour` | 正常时每天几点查（0–23，Asia/Shanghai，默认 9） |
 | `notify_targets` | 提醒目标，多人/多群，见下 |
 | `notify_platform_id` | 短格式目标的平台实例 ID（须与日志 UMO 前缀一致，如 `wechat_robot_xTVn`） |
+| `send_test_now` | **发送测试消息**：设为开并保存 → 立即向 `notify_targets` 推送一条测试，发完自动关 |
 | `quiet_start_hour` / `quiet_end_hour` | 静默时段（默认 0–6）；此间提醒推迟到结束时刻 |
 
 **不要把 `access_token` / `cas_cookie` 提交进公开 Git 仓库。**
@@ -68,6 +69,15 @@ wechat_robot:GroupMessage:1234567890@chatroom
 | `#电费` / `#水电` / `#宿舍水电` | 查询当前 `room_pk` 的水电 |
 | `#宿舍列表` | 列出账号已绑定房间（方便改 `room_pk`） |
 | `#刷新水电凭证` | 用面板里的 `account` + `cas_cookie` 换新 token 并尽量写回配置 |
+| `#水电测试` / `#电费测试` | 立即向 `notify_targets` 发一条测试提醒（不改定时状态） |
+
+## 发送测试消息（三种方式）
+
+1. **面板开关**：插件配置里打开 `发送测试消息`（`send_test_now`）→ 保存；热重载后立刻推送，开关自动关回。
+2. **插件视图**：插件详情 → 打开「测试推送」视图 → 点按钮「发送测试消息」。
+3. **微信指令**：`#水电测试` 或 `#电费测试`。
+
+测试文案形如「【水电测试】当前宿舍… 电费余量…（测试推送，非真实告警）」；凭证缺失时仍会发说明性测试行。需先填好 `notify_targets`。
 
 不会接管 `#过滑块密钥`（仍由 wechat-robot-client 处理）。
 

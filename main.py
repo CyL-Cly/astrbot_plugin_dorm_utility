@@ -22,6 +22,7 @@ from astrbot.api.star import Context, Star, StarTools
 DEFAULT_ALIASES = ("#电费", "#水电", "#宿舍水电")
 REFRESH_CMD = "#刷新水电凭证"
 LIST_CMD = "#宿舍列表"
+TEST_CMDS = ("#水电测试", "#电费测试")
 PLUGIN_NAME = "astrbot_plugin_dorm_utility"
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_FILENAME = "alert_state.json"
@@ -219,6 +220,8 @@ class Main(Star):
         self._alert_task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._tick_lock = asyncio.Lock()
+        self._test_send_lock = asyncio.Lock()
+        self._register_web_apis()
         logger.info("astrbot_plugin_dorm_utility loaded")
 
     # ---- config helpers ----
@@ -283,6 +286,9 @@ class Main(Star):
         platform = str(_cfg_get(self.config, "notify_platform_id", "wechat_robot") or "wechat_robot")
         return parse_notify_targets(raw, platform)
 
+    def _send_test_now_flag(self) -> bool:
+        return bool(_cfg_get(self.config, "send_test_now", False))
+
     # ---- HTTP ----
 
     def _http_json(
@@ -296,7 +302,7 @@ class Main(Star):
         url = f"{self._base_url()}{path}"
         headers = {
             "Accept": "application/json",
-            "User-Agent": "astrbot-plugin-dorm-utility/0.2",
+            "User-Agent": "astrbot-plugin-dorm-utility/0.2.1",
         }
         auth = token if token is not None else self._token()
         if auth:
@@ -529,6 +535,111 @@ class Main(Star):
             "请把新 access_token 粘贴到 AstrBot 面板（宿舍水电插件）。"
         )
 
+    # ---- test push ----
+
+    def _build_test_message(self) -> str:
+        """Build Chinese test text; include live snapshot when possible."""
+        err, payload = self._fetch_dashboard_payload()
+        if payload is not None:
+            dorm = _room_label(payload)
+            room = payload.get("room") or {}
+            overview = payload.get("overview") or {}
+            elec_odd = room.get("latestElecOdd", overview.get("todayElecOdd"))
+            return (
+                f"【水电测试】当前宿舍：{dorm}\n"
+                f"电费余量：{_as_float(elec_odd)}\n"
+                f"（测试推送，非真实告警）"
+            )
+        detail = err or "凭证或宿舍未配置"
+        return (
+            "【水电测试】测试推送已触发，但未能拉取实时水电。\n"
+            f"原因：{detail}\n"
+            "（测试推送，非真实告警）"
+        )
+
+    async def _clear_send_test_flag(self) -> bool:
+        """Reset send_test_now to false in plugin config (file save only)."""
+        cfg = self.config
+        if cfg is None:
+            return False
+        try:
+            if isinstance(cfg, dict) or hasattr(cfg, "__setitem__"):
+                cfg["send_test_now"] = False
+            save_async = getattr(cfg, "save_config_async", None)
+            if callable(save_async):
+                await save_async()
+                return True
+            save = getattr(cfg, "save_config", None)
+            if callable(save):
+                save()
+                return True
+        except Exception as e:
+            logger.warning("dorm_utility: clear send_test_now failed: %s", e)
+        return False
+
+    async def _send_test_alert(self, *, source: str = "manual") -> dict[str, Any]:
+        """One-shot test to notify_targets. Does not update alert_state."""
+        async with self._test_send_lock:
+            umos = self._notify_umos()
+            if not umos:
+                msg = "notify_targets 为空，请先在面板填写提醒目标。"
+                logger.warning("dorm_utility: test skipped — %s", msg)
+                return {"ok": False, "sent": 0, "targets": 0, "message": msg, "source": source}
+            text = self._build_test_message()
+            sent = await self._send_alert_text(text)
+            ok = sent > 0
+            result = {
+                "ok": ok,
+                "sent": sent,
+                "targets": len(umos),
+                "message": (
+                    f"已向 {sent}/{len(umos)} 个目标发送测试消息。"
+                    if ok
+                    else f"发送失败（0/{len(umos)}）。请检查 notify_platform_id / 适配器是否在线。"
+                ),
+                "preview": text,
+                "source": source,
+            }
+            logger.info(
+                "dorm_utility: test push source=%s sent=%s/%s",
+                source,
+                sent,
+                len(umos),
+            )
+            return result
+
+    def _register_web_apis(self) -> None:
+        register = getattr(self.context, "register_web_api", None)
+        if not callable(register):
+            logger.warning("dorm_utility: register_web_api unavailable")
+            return
+        try:
+            register(
+                f"/{PLUGIN_NAME}/send-test",
+                self._api_send_test,
+                ["POST"],
+                "Send dorm utility test alert to notify_targets",
+            )
+        except Exception as e:
+            logger.warning("dorm_utility: register web api failed: %s", e)
+
+    async def _api_send_test(self):
+        try:
+            from astrbot.api.web import error_response, json_response
+        except Exception:
+            # very old AstrBot — return plain dict (may still work via bridge)
+            result = await self._send_test_alert(source="plugin_view")
+            return result
+        try:
+            result = await self._send_test_alert(source="plugin_view")
+            if not result.get("ok"):
+                # still 200 with ok=false so UI can show message
+                return json_response(result)
+            return json_response(result)
+        except Exception as e:
+            logger.warning("dorm_utility: api send-test error: %s", e)
+            return error_response(str(e))
+
     # ---- quiet hours / notify ----
 
     def _in_quiet_hours(self, now: datetime | None = None) -> bool:
@@ -738,15 +849,29 @@ class Main(Star):
     async def initialize(self) -> None:
         self._stop.clear()
         if self._alert_task and not self._alert_task.done():
+            # still honor one-shot panel trigger on hot-reload path
+            await self._maybe_fire_panel_test()
             return
         self._alert_task = asyncio.create_task(
             self._alert_loop(),
             name="dorm_utility_alert_loop",
         )
+        await self._maybe_fire_panel_test()
         logger.info(
             "dorm_utility: initialize done (alert_enabled=%s)",
             self._alert_enabled(),
         )
+
+    async def _maybe_fire_panel_test(self) -> None:
+        if not self._send_test_now_flag():
+            return
+        logger.info("dorm_utility: send_test_now=true — firing one-shot test")
+        try:
+            result = await self._send_test_alert(source="panel_config")
+            logger.info("dorm_utility: panel test result: %s", result.get("message"))
+        finally:
+            cleared = await self._clear_send_test_flag()
+            logger.info("dorm_utility: send_test_now cleared=%s", cleared)
 
     async def terminate(self) -> None:
         self._stop.set()
@@ -783,5 +908,10 @@ class Main(Star):
             reply = await self._list_rooms()
             event.stop_event()
             yield event.plain_result(reply)
+            return
+        if text in TEST_CMDS:
+            result = await self._send_test_alert(source="chat_command")
+            event.stop_event()
+            yield event.plain_result(str(result.get("message") or "测试推送已执行。"))
             return
         # other #commands (e.g. #过滑块密钥) — do not stop; let client/other plugins handle
