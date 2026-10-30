@@ -1,8 +1,8 @@
 # astrbot_plugin_dorm_utility（宿舍水电）
 
-在微信（或其他 AstrBot 平台）发送 `#电费` / `#水电`，查询宿舍水电余量与今日用量。
+在微信（或其他 AstrBot 平台）发送 `#电费` / `#水电`，查询宿舍水电余量与今日用量；可选**定时余额不足提醒**。
 
-数据来自 [water-monitor](https://tools.rainfog.top/water-monitor)；**凭证与宿舍房间可在 AstrBot 插件面板随时更新**，无需改代码。
+数据来自 [water-monitor](https://tools.rainfog.top/water-monitor)；**凭证、宿舍、提醒目标均可在 AstrBot 插件面板更新**，无需改代码。
 
 ## 安装
 
@@ -24,8 +24,40 @@
 | `cas_cookie` | CAS Cookie（可选，刷新凭证用） |
 | `command_aliases` | 查询别名，逗号分隔，默认 `#电费,#水电` |
 | `timeout_sec` | HTTP 超时秒数，默认 15 |
+| `alert_enabled` | 是否启用定时查询/提醒（默认关） |
+| `alert_threshold` | 低于此电费余量则提醒（默认 10） |
+| `lack_balance_threshold` | 低于此值进入每小时查询（默认 35） |
+| `daily_query_hour` | 正常时每天几点查（0–23，Asia/Shanghai，默认 9） |
+| `notify_targets` | 提醒目标，多人/多群，见下 |
+| `notify_platform_id` | 短格式目标的平台 ID（默认 `wechat_robot`） |
+| `quiet_start_hour` / `quiet_end_hour` | 静默时段（默认 0–6）；此间提醒推迟到结束时刻 |
 
 **不要把 `access_token` / `cas_cookie` 提交进公开 Git 仓库。**
+
+### 提醒目标怎么填（可多选）
+
+`notify_targets` 支持**逗号或换行**分隔多个目标：
+
+```
+wxid_abc123
+1234567890@chatroom
+wechat_robot:FriendMessage:wxid_abc123
+wechat_robot:GroupMessage:1234567890@chatroom
+```
+
+- 好友短格式：`wxid_xxx` → `wechat_robot:FriendMessage:wxid_xxx`
+- 群短格式：`xxx@chatroom` → `wechat_robot:GroupMessage:xxx@chatroom`
+- 也可直接填完整 UMO
+
+填好转发目标后，再把 `alert_enabled` 打开。
+
+## 定时逻辑（Asia/Shanghai）
+
+1. 每次查询（手动 `#电费` 或定时）后：余额 < `lack_balance_threshold` → `LackBalance=1`，否则 `0`
+2. `LackBalance != 1`：每天在 `daily_query_hour` 查一次；`LackBalance == 1`：每小时查一次
+3. 余额 < `alert_threshold`：向 `notify_targets` 发提醒
+4. 若提醒落在静默时段（默认 00:00–06:00）：**推迟到当天 `quiet_end_hour`**，不丢弃
+5. 状态文件：`data/plugin_data/astrbot_plugin_dorm_utility/alert_state.json`
 
 ## 指令
 
@@ -51,4 +83,4 @@
 ## 开发
 
 - 无第三方依赖（stdlib `urllib`）
-- 本地格式化冒烟：`python3 -c "from main import format_dashboard; ..."`
+- 本地格式化冒烟：`PYTHONPATH=/path/to/AstrBot python3 -c "from main import format_dashboard; ..."`

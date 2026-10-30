@@ -8,3 +8,6 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+data/
+alert_state.json

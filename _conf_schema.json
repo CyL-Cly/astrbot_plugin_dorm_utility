@@ -40,5 +40,53 @@
     "hint": "请求水电 API 的超时时间。",
     "type": "int",
     "default": 15
+  },
+  "alert_enabled": {
+    "description": "启用定时余额提醒",
+    "hint": "关闭时不跑定时查询/提醒。默认关，填好转发目标后再开。",
+    "type": "bool",
+    "default": false
+  },
+  "alert_threshold": {
+    "description": "提醒阈值（电费余量低于此值提醒）",
+    "hint": "默认 10。定时查询发现电费余量低于该值时，向通知目标发提醒。",
+    "type": "float",
+    "default": 10
+  },
+  "lack_balance_threshold": {
+    "description": "进入高频查询的阈值",
+    "hint": "默认 35。余额 < 此值时 LackBalance=1，改为每小时查一次；否则每天查一次。",
+    "type": "float",
+    "default": 35
+  },
+  "daily_query_hour": {
+    "description": "每日查询时刻（0-23，Asia/Shanghai）",
+    "hint": "LackBalance=0 时每天在这个整点查询。默认 9。",
+    "type": "int",
+    "default": 9
+  },
+  "notify_targets": {
+    "description": "提醒目标（多人/多群）",
+    "hint": "逗号或换行分隔，可多选。短格式：好友填 wxid_xxx，群填 123456@chatroom；或完整 UMO：wechat_robot:FriendMessage:wxid_xxx / wechat_robot:GroupMessage:xxx@chatroom。",
+    "type": "text",
+    "default": ""
+  },
+  "notify_platform_id": {
+    "description": "短格式目标的平台 ID",
+    "hint": "仅当 notify_targets 写短 wxid/@chatroom 时使用，拼成 wechat_robot:FriendMessage:...。默认 wechat_robot。",
+    "type": "string",
+    "default": "wechat_robot"
+  },
+  "quiet_start_hour": {
+    "description": "静默开始小时（含，0-23）",
+    "hint": "默认 0。落在静默区间的提醒会推迟到 quiet_end_hour，不丢弃。",
+    "type": "int",
+    "default": 0
+  },
+  "quiet_end_hour": {
+    "description": "静默结束小时（不含，0-23）",
+    "hint": "默认 6。即 00:00–06:00 的提醒推迟到当天 06:00 发送。",
+    "type": "int",
+    "default": 6
   }
 }
