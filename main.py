@@ -28,7 +28,7 @@ TEST_CMDS = ("#水电测试", "#电费测试")
 PLUGIN_NAME = "astrbot_plugin_dorm_utility"
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_FILENAME = "alert_state.json"
-PLUGIN_VERSION = "0.2.5"
+PLUGIN_VERSION = "0.2.6"
 MAX_HISTORY_DAYS = 30
 
 
@@ -127,17 +127,18 @@ def format_dashboard(payload: dict[str, Any]) -> str:
 
 
 def parse_relative_day_command(text: str) -> int | None:
-    """Parse #昨日水电 / #前天水电 / #-N水电 / #N天前水电 → days_ago (>=1)."""
-    t = (text or "").strip()
-    if re.fullmatch(r"#\s*昨日水电", t):
+    """Parse #昨日水电/电费、#前天…、#-N…、#N天前… → days_ago (>=1)."""
+    t = re.sub(r"^#\s+", "#", (text or "").strip())
+    # 水电 / 电费 同义
+    if re.fullmatch(r"#\s*昨日(水电|电费)", t):
         return 1
-    if re.fullmatch(r"#\s*前天水电", t):
+    if re.fullmatch(r"#\s*前天(水电|电费)", t):
         return 2
-    m = re.fullmatch(r"#\s*-(\d+)\s*水电", t)
+    m = re.fullmatch(r"#\s*-(\d+)\s*(水电|电费)", t)
     if m:
         n = int(m.group(1))
         return n if n >= 1 else None
-    m = re.fullmatch(r"#\s*(\d+)\s*天前\s*水电", t)
+    m = re.fullmatch(r"#\s*(\d+)\s*天前\s*(水电|电费)", t)
     if m:
         n = int(m.group(1))
         return n if n >= 1 else None
@@ -1241,7 +1242,7 @@ class Main(Star):
         # normalize "# 电费" → keep original for history parser; aliases are exact
         compact = re.sub(r"^#\s+", "#", text)
 
-        days_ago = parse_relative_day_command(text)
+        days_ago = parse_relative_day_command(text) or parse_relative_day_command(compact)
         if days_ago is not None:
             reply, chart = await self._query_history(days_ago)
             event.stop_event()
