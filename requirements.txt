@@ -1,1 +1,2 @@
-# stdlib only (urllib); no extra runtime deps
+# Chart: matplotlib preferred; Pillow used as fallback if present
+matplotlib>=3.7

@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import AsyncGenerator
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -26,6 +28,8 @@ TEST_CMDS = ("#水电测试", "#电费测试")
 PLUGIN_NAME = "astrbot_plugin_dorm_utility"
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_FILENAME = "alert_state.json"
+PLUGIN_VERSION = "0.2.3"
+MAX_HISTORY_DAYS = 30
 
 
 def _cfg_get(config: Any, key: str, default: Any = None) -> Any:
@@ -119,6 +123,194 @@ def format_dashboard(payload: dict[str, Any]) -> str:
         f"今日用水：{_as_float(water_use)}\n"
         f"快照：{_format_snapshot(snap)}"
     )
+
+
+
+def parse_relative_day_command(text: str) -> int | None:
+    """Parse #昨日水电 / #前天水电 / #-N水电 / #N天前水电 → days_ago (>=1)."""
+    t = (text or "").strip()
+    if re.fullmatch(r"#\s*昨日水电", t):
+        return 1
+    if re.fullmatch(r"#\s*前天水电", t):
+        return 2
+    m = re.fullmatch(r"#\s*-(\d+)\s*水电", t)
+    if m:
+        n = int(m.group(1))
+        return n if n >= 1 else None
+    m = re.fullmatch(r"#\s*(\d+)\s*天前\s*水电", t)
+    if m:
+        n = int(m.group(1))
+        return n if n >= 1 else None
+    return None
+
+
+def _day_hint(days_ago: int) -> str:
+    if days_ago == 1:
+        return "昨日"
+    if days_ago == 2:
+        return "前天"
+    return f"{days_ago}天前"
+
+
+def format_snapshot_day(
+    payload: dict[str, Any],
+    *,
+    days_ago: int,
+    stat_date: str,
+) -> str:
+    """Format snapshot-day JSON in the same structure as today's dashboard reply."""
+    overview = payload.get("overview") or {}
+    dorm = _room_label(payload)
+    if days_ago == 1:
+        elec_label = "昨日用电"
+        water_label = "昨日用水"
+    else:
+        elec_label = "当日用电"
+        water_label = "当日用水"
+    elec_use = overview.get("roomElec")
+    water_use = overview.get("roomWater")
+    return (
+        f"宿舍：{dorm}\n"
+        f"电费余量：-（历史日无）\n"
+        f"{elec_label}：{_as_float(elec_use)}\n"
+        f"水费余量：-（历史日无）\n"
+        f"{water_label}：{_as_float(water_use)}\n"
+        f"快照：{stat_date}（{_day_hint(days_ago)}）"
+    )
+
+
+def extract_hourly_elec(payload: dict[str, Any]) -> list[tuple[str, float]]:
+    """Extract (hour_label, cumulative_kwh) pairs from dashboard/snapshot-day hourly.elec."""
+    hourly = payload.get("hourly") or {}
+    series = hourly.get("elec") or []
+    out: list[tuple[str, float]] = []
+    if not isinstance(series, list):
+        return out
+    for item in series:
+        if not isinstance(item, dict):
+            continue
+        hour = str(item.get("hour", "")).strip()
+        val = _to_float(item.get("value"))
+        if not hour or val is None:
+            continue
+        # normalize hour label to 2 digits when numeric
+        if hour.isdigit():
+            hour = f"{int(hour):02d}"
+        out.append((hour, val))
+    return out
+
+
+def _pick_cjk_font() -> str | None:
+    candidates = [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
+    ]
+    for p in candidates:
+        if Path(p).is_file():
+            return p
+    return None
+
+
+def render_elec_hourly_chart(
+    points: list[tuple[str, float]],
+    *,
+    title: str,
+    out_path: Path,
+) -> Path | None:
+    """Draw electricity-only cumulative hourly line chart → PNG. Prefer matplotlib, else PIL."""
+    if not points:
+        return None
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    hours = [h for h, _ in points]
+    values = [v for _, v in points]
+
+    # --- matplotlib ---
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib import font_manager
+
+        font_path = _pick_cjk_font()
+        if font_path:
+            font_manager.fontManager.addfont(font_path)
+            fname = font_manager.FontProperties(fname=font_path).get_name()
+            plt.rcParams["font.family"] = fname
+        plt.rcParams["axes.unicode_minus"] = False
+
+        fig, ax = plt.subplots(figsize=(8.5, 4.2), dpi=120)
+        ax.plot(range(len(values)), values, color="#2563eb", linewidth=2.2, marker="o", markersize=3.5)
+        ax.fill_between(range(len(values)), values, color="#2563eb", alpha=0.12)
+        ax.set_title(title, fontsize=13)
+        ax.set_xlabel("小时")
+        ax.set_ylabel("累计用电（度）")
+        ax.set_xticks(range(len(hours)))
+        ax.set_xticklabels(hours, fontsize=8)
+        ax.grid(True, linestyle="--", alpha=0.35)
+        ax.set_ylim(bottom=0)
+        fig.tight_layout()
+        fig.savefig(out_path, format="png")
+        plt.close(fig)
+        if out_path.is_file() and out_path.stat().st_size > 0:
+            return out_path
+    except Exception as e:
+        logger.warning("dorm_utility: matplotlib chart failed: %s", e)
+
+    # --- PIL fallback ---
+    try:
+        from PIL import Image as PILImage, ImageDraw, ImageFont
+
+        W, H = 900, 420
+        pad_l, pad_r, pad_t, pad_b = 64, 24, 48, 48
+        img = PILImage.new("RGB", (W, H), (255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        font = ImageFont.load_default()
+        font_path = _pick_cjk_font()
+        if font_path:
+            try:
+                font = ImageFont.truetype(font_path, 18)
+                font_sm = ImageFont.truetype(font_path, 12)
+            except Exception:
+                font_sm = font
+        else:
+            font_sm = font
+        draw.text((pad_l, 12), title, fill=(30, 30, 30), font=font)
+        plot_w = W - pad_l - pad_r
+        plot_h = H - pad_t - pad_b
+        vmax = max(values) if values else 1.0
+        if vmax <= 0:
+            vmax = 1.0
+        # axes
+        draw.rectangle([pad_l, pad_t, pad_l + plot_w, pad_t + plot_h], outline=(180, 180, 180))
+        n = len(values)
+        pts = []
+        for i, v in enumerate(values):
+            x = pad_l + (0 if n == 1 else int(i * plot_w / (n - 1)))
+            y = pad_t + plot_h - int((v / vmax) * plot_h)
+            pts.append((x, y))
+        if len(pts) >= 2:
+            draw.line(pts, fill=(37, 99, 235), width=2)
+        for x, y in pts:
+            draw.ellipse([x - 2, y - 2, x + 2, y + 2], fill=(37, 99, 235))
+        # x labels every 3h
+        for i, h in enumerate(hours):
+            if i % 3 != 0 and i != n - 1:
+                continue
+            x = pts[i][0]
+            draw.text((x - 6, pad_t + plot_h + 8), h, fill=(80, 80, 80), font=font_sm)
+        draw.text((8, pad_t), f"{vmax:.1f}", fill=(80, 80, 80), font=font_sm)
+        draw.text((8, pad_t + plot_h - 12), "0", fill=(80, 80, 80), font=font_sm)
+        img.save(out_path, format="PNG")
+        if out_path.is_file() and out_path.stat().st_size > 0:
+            return out_path
+    except Exception as e:
+        logger.warning("dorm_utility: PIL chart failed: %s", e)
+    return None
 
 
 def format_rooms_list(payload: dict[str, Any]) -> str:
@@ -302,7 +494,7 @@ class Main(Star):
         url = f"{self._base_url()}{path}"
         headers = {
             "Accept": "application/json",
-            "User-Agent": "astrbot-plugin-dorm-utility/0.2.1",
+            "User-Agent": f"astrbot-plugin-dorm-utility/{PLUGIN_VERSION}",
         }
         auth = token if token is not None else self._token()
         if auth:
@@ -416,7 +608,30 @@ class Main(Star):
         except Exception as e:
             logger.warning("dorm_utility: save state failed: %s", e)
 
-    # ---- dashboard fetch ----
+    # ---- dashboard / snapshot-day fetch ----
+
+    def _http_error_message(
+        self,
+        status: int,
+        payload: Any,
+        *,
+        room_pk: int | None,
+        what: str = "查询",
+    ) -> str | None:
+        if status == 401:
+            return "凭证失效，请在 AstrBot 面板更新 access_token（或发 #刷新水电凭证）。"
+        if status == 404:
+            return f"房间不存在或未绑定（room_pk={room_pk}）。可用 #宿舍列表 查看。"
+        if status >= 400:
+            detail = ""
+            if isinstance(payload, dict):
+                detail = str(payload.get("detail") or payload.get("message") or "")[:120]
+            elif isinstance(payload, str):
+                detail = payload[:120]
+            return f"{what}失败（HTTP {status}）{('：' + detail) if detail else ''}。"
+        if not isinstance(payload, dict):
+            return f"{what}失败：返回不是 JSON。"
+        return None
 
     def _fetch_dashboard_payload(self) -> tuple[str | None, dict[str, Any] | None]:
         """Return (error_message, payload). One of them is set."""
@@ -430,20 +645,67 @@ class Main(Star):
             return f"网络错误：{e}", None
         except Exception as e:
             return f"查询失败：{e}", None
-        if status == 401:
-            return "凭证失效，请在 AstrBot 面板更新 access_token（或发 #刷新水电凭证）。", None
-        if status == 404:
-            return f"房间不存在或未绑定（room_pk={room_pk}）。可用 #宿舍列表 查看。", None
-        if status >= 400:
-            detail = ""
-            if isinstance(payload, dict):
-                detail = str(payload.get("detail") or payload.get("message") or "")[:120]
-            elif isinstance(payload, str):
-                detail = payload[:120]
-            return f"查询失败（HTTP {status}）{('：' + detail) if detail else ''}。", None
-        if not isinstance(payload, dict):
-            return "查询失败：返回不是 JSON。", None
-        return None, payload
+        err = self._http_error_message(status, payload, room_pk=room_pk)
+        if err:
+            return err, None
+        return None, payload  # type: ignore[return-value]
+
+    def _fetch_snapshot_day_payload(
+        self, stat_date: str
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """GET /rooms/{pk}/snapshot-day?stat_date=YYYY-MM-DD"""
+        token = self._token()
+        room_pk = self._room_pk()
+        if not token or room_pk is None:
+            return "请先在 AstrBot 面板填 access_token 和 room_pk。", None
+        qs = urllib.parse.urlencode({"stat_date": stat_date})
+        path = f"/rooms/{room_pk}/snapshot-day?{qs}"
+        try:
+            status, payload = self._http_json("GET", path)
+        except ConnectionError as e:
+            return f"网络错误：{e}", None
+        except Exception as e:
+            return f"查询失败：{e}", None
+        err = self._http_error_message(status, payload, room_pk=room_pk, what="历史查询")
+        if err:
+            return err, None
+        return None, payload  # type: ignore[return-value]
+
+    def _chart_dir(self) -> Path:
+        d = self._data_dir() / "charts"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _cleanup_old_charts(self, keep: int = 20) -> None:
+        try:
+            files = sorted(
+                self._chart_dir().glob("elec_*.png"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for stale in files[keep:]:
+                try:
+                    stale.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _make_elec_chart(
+        self,
+        payload: dict[str, Any],
+        *,
+        title: str,
+        tag: str,
+    ) -> Path | None:
+        points = extract_hourly_elec(payload)
+        if not points:
+            return None
+        stamp = _now_shanghai().strftime("%Y%m%d_%H%M%S")
+        out = self._chart_dir() / f"elec_{tag}_{stamp}.png"
+        path = render_elec_hourly_chart(points, title=title, out_path=out)
+        self._cleanup_old_charts()
+        return path
 
     def _apply_lack_balance(self, state: dict[str, Any], balance: float | None) -> None:
         if balance is None:
@@ -451,17 +713,51 @@ class Main(Star):
         lack_th = self._lack_threshold()
         state["LackBalance"] = 1 if balance < lack_th else 0
 
-    async def _query_dashboard(self) -> str:
+    async def _query_dashboard(self) -> tuple[str, Path | None]:
+        """Today's dashboard text + optional electricity chart path."""
         err, payload = self._fetch_dashboard_payload()
         if err:
-            return err
+            return err, None
         assert payload is not None
         balance = extract_elec_odd(payload)
         state = self._load_state()
         self._apply_lack_balance(state, balance)
         state["last_query_at"] = _now_shanghai().isoformat()
         self._save_state(state)
-        return format_dashboard(payload)
+        text = format_dashboard(payload)
+        hourly = payload.get("hourly") or {}
+        day = str(hourly.get("date") or _now_shanghai().strftime("%Y-%m-%d"))
+        chart = self._make_elec_chart(
+            payload,
+            title=f"电费用量折线（{day}）",
+            tag=f"today_{day}",
+        )
+        return text, chart
+
+    async def _query_history(self, days_ago: int) -> tuple[str, Path | None]:
+        """Historical snapshot-day text + electricity chart."""
+        if days_ago < 1:
+            return "历史查询天数须 ≥ 1。", None
+        if days_ago > MAX_HISTORY_DAYS:
+            return f"最多可查最近 {MAX_HISTORY_DAYS} 天。", None
+        today = _now_shanghai().date()
+        target: date = today - timedelta(days=days_ago)
+        stat_date = target.strftime("%Y-%m-%d")
+        err, payload = self._fetch_snapshot_day_payload(stat_date)
+        if err:
+            return err, None
+        assert payload is not None
+        # Prefer API-reported date when present
+        api_date = str(
+            (payload.get("statDate") or (payload.get("hourly") or {}).get("date") or stat_date)
+        )
+        text = format_snapshot_day(payload, days_ago=days_ago, stat_date=api_date)
+        chart = self._make_elec_chart(
+            payload,
+            title=f"电费用量折线（{api_date} · {_day_hint(days_ago)}）",
+            tag=f"hist_{api_date}",
+        )
+        return text, chart
 
     async def _list_rooms(self) -> str:
         token = self._token()
@@ -879,27 +1175,47 @@ class Main(Star):
 
     # ---- commands ----
 
-    @filter.regex(r"^#\S+\s*$")
+    def _yield_text_and_optional_chart(
+        self,
+        event: AstrMessageEvent,
+        reply: str,
+        chart: Path | None,
+    ) -> MessageEventResult:
+        if chart is not None and Path(chart).is_file():
+            return event.make_result().message(reply).file_image(str(chart))
+        return event.plain_result(reply)
+
+    @filter.regex(r"^#\s*.+\s*$")
     async def on_hash_command(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
         text = (event.get_message_str() or "").strip()
-        if text in self._aliases():
-            reply = await self._query_dashboard()
+        # normalize "# 电费" → keep original for history parser; aliases are exact
+        compact = re.sub(r"^#\s+", "#", text)
+
+        days_ago = parse_relative_day_command(text)
+        if days_ago is not None:
+            reply, chart = await self._query_history(days_ago)
             event.stop_event()
-            yield event.plain_result(reply)
+            yield self._yield_text_and_optional_chart(event, reply, chart)
             return
-        if text == REFRESH_CMD:
+
+        if text in self._aliases() or compact in self._aliases():
+            reply, chart = await self._query_dashboard()
+            event.stop_event()
+            yield self._yield_text_and_optional_chart(event, reply, chart)
+            return
+        if text == REFRESH_CMD or compact == REFRESH_CMD:
             reply = await self._refresh_token()
             event.stop_event()
             yield event.plain_result(reply)
             return
-        if text == LIST_CMD:
+        if text == LIST_CMD or compact == LIST_CMD:
             reply = await self._list_rooms()
             event.stop_event()
             yield event.plain_result(reply)
             return
-        if text in TEST_CMDS:
+        if text in TEST_CMDS or compact in TEST_CMDS:
             result = await self._send_test_alert(source="chat_command")
             event.stop_event()
             yield event.plain_result(str(result.get("message") or "测试推送已执行。"))

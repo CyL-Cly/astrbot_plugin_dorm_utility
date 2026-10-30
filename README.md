@@ -1,6 +1,6 @@
 # astrbot_plugin_dorm_utility（宿舍水电）
 
-在微信（或其他 AstrBot 平台）发送 `#电费` / `#水电`，查询宿舍水电余量与今日用量；可选**定时余额不足提醒**；支持面板/视图/指令**一键发送测试消息**。
+在微信（或其他 AstrBot 平台）发送 `#电费` / `#水电`，查询宿舍水电余量与今日用量，并附带**电费折线图**；支持 `#昨日水电` / `#-N水电` 查历史；可选**定时余额不足提醒**；支持面板/视图/指令**一键发送测试消息**。
 
 数据来自 [water-monitor](https://tools.rainfog.top/water-monitor)；**凭证、宿舍、提醒目标均可在 AstrBot 插件面板更新**，无需改代码。
 
@@ -66,7 +66,10 @@ wechat_robot:GroupMessage:1234567890@chatroom
 
 | 指令 | 作用 |
 |------|------|
-| `#电费` / `#水电` / `#宿舍水电` | 查询当前 `room_pk` 的水电 |
+| `#电费` / `#水电` / `#宿舍水电` | 查询今日水电（文案 + 电费折线图） |
+| `#昨日水电` | 查昨天（`snapshot-day`，同结构文案 + 电费折线图） |
+| `#前天水电` / `#-2水电` / `#2天前水电` | 查前天 |
+| `#-N水电` / `#N天前水电` | 查 N 天前（最多 30 天；`# -3水电` 也行） |
 | `#宿舍列表` | 列出账号已绑定房间（方便改 `room_pk`） |
 | `#刷新水电凭证` | 用面板里的 `account` + `cas_cookie` 换新 token 并尽量写回配置 |
 | `#水电测试` / `#电费测试` | 立即向 `notify_targets` 发一条测试提醒（不改定时状态） |
@@ -92,7 +95,10 @@ wechat_robot:GroupMessage:1234567890@chatroom
 快照：2026-10-30 22:00
 ```
 
+历史（`#昨日水电`）结构相同，用电/用水为「昨日/当日」标签，余量显示「历史日无」；并另发一张仅电费的折线图。
+
 ## 开发
 
-- 无第三方依赖（stdlib `urllib`）
+- 折线图优先 `matplotlib`（见 `requirements.txt`），缺省时尝试 Pillow
+- 今日：`GET /rooms/{roomPk}/dashboard`；历史：`GET /rooms/{roomPk}/snapshot-day?stat_date=YYYY-MM-DD`
 - 本地格式化冒烟：`PYTHONPATH=/path/to/AstrBot python3 -c "from main import format_dashboard; ..."`
