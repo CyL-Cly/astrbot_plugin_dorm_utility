@@ -29,7 +29,7 @@
 | `lack_balance_threshold` | 低于此值进入每小时查询（默认 35） |
 | `daily_query_hour` | 正常时每天几点查（0–23，Asia/Shanghai，默认 9） |
 | `notify_targets` | 提醒目标，多人/多群，见下 |
-| `notify_platform_id` | 短格式目标的平台 ID（默认 `wechat_robot`） |
+| `notify_platform_id` | 短格式目标的平台实例 ID（须与日志 UMO 前缀一致，如 `wechat_robot_xTVn`） |
 | `quiet_start_hour` / `quiet_end_hour` | 静默时段（默认 0–6）；此间提醒推迟到结束时刻 |
 
 **不要把 `access_token` / `cas_cookie` 提交进公开 Git 仓库。**
@@ -50,6 +50,8 @@ wechat_robot:GroupMessage:1234567890@chatroom
 - 也可直接填完整 UMO
 
 填好转发目标后，再把 `alert_enabled` 打开。
+> 提示：主动发送用的是平台**实例 id**。看日志里的 UMO（例如 `wechat_robot_xTVn:FriendMessage:...`），把 `notify_platform_id` 设成 `wechat_robot_xTVn`，或直接在 `notify_targets` 填完整 UMO。
+
 
 ## 定时逻辑（Asia/Shanghai）
 
