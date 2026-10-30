@@ -28,7 +28,7 @@ TEST_CMDS = ("#水电测试", "#电费测试")
 PLUGIN_NAME = "astrbot_plugin_dorm_utility"
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_FILENAME = "alert_state.json"
-PLUGIN_VERSION = "0.2.4"
+PLUGIN_VERSION = "0.2.5"
 MAX_HISTORY_DAYS = 30
 
 
@@ -180,12 +180,16 @@ def format_snapshot_day(
 
 
 def extract_hourly_elec(payload: dict[str, Any]) -> list[tuple[str, float]]:
-    """Extract (hour_label, cumulative_kwh) pairs from dashboard/snapshot-day hourly.elec."""
+    """Extract (hour_label, hourly_kwh_usage) from cumulative hourly.elec series.
+
+    API values are cumulative kWh within the day; convert to per-hour usage:
+    usage[0] = value[0], usage[i] = max(0, value[i] - value[i-1]).
+    """
     hourly = payload.get("hourly") or {}
     series = hourly.get("elec") or []
-    out: list[tuple[str, float]] = []
+    cum: list[tuple[str, float]] = []
     if not isinstance(series, list):
-        return out
+        return []
     for item in series:
         if not isinstance(item, dict):
             continue
@@ -193,10 +197,18 @@ def extract_hourly_elec(payload: dict[str, Any]) -> list[tuple[str, float]]:
         val = _to_float(item.get("value"))
         if not hour or val is None:
             continue
-        # normalize hour label to 2 digits when numeric
         if hour.isdigit():
             hour = f"{int(hour):02d}"
-        out.append((hour, val))
+        cum.append((hour, val))
+    out: list[tuple[str, float]] = []
+    prev: float | None = None
+    for hour, val in cum:
+        if prev is None:
+            usage = max(0.0, val)
+        else:
+            usage = max(0.0, val - prev)
+        out.append((hour, round(usage, 4)))
+        prev = val
     return out
 
 
@@ -220,7 +232,7 @@ def render_elec_hourly_chart(
     title: str,
     out_path: Path,
 ) -> Path | None:
-    """Draw electricity-only cumulative hourly line chart → PNG. Prefer matplotlib, else PIL."""
+    """Draw electricity-only per-hour usage line chart → PNG. Prefer matplotlib, else PIL."""
     if not points:
         return None
     out_path = Path(out_path)
@@ -248,7 +260,7 @@ def render_elec_hourly_chart(
         ax.fill_between(range(len(values)), values, color="#2563eb", alpha=0.12)
         ax.set_title(title, fontsize=13)
         ax.set_xlabel("小时")
-        ax.set_ylabel("累计用电（度）")
+        ax.set_ylabel("每小时用电（度）")
         ax.set_xticks(range(len(hours)))
         ax.set_xticklabels(hours, fontsize=8)
         ax.grid(True, linestyle="--", alpha=0.35)
