@@ -28,7 +28,7 @@ TEST_CMDS = ("#水电测试", "#电费测试")
 PLUGIN_NAME = "astrbot_plugin_dorm_utility"
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_FILENAME = "alert_state.json"
-PLUGIN_VERSION = "0.2.3"
+PLUGIN_VERSION = "0.2.4"
 MAX_HISTORY_DAYS = 30
 
 
@@ -1001,15 +1001,16 @@ class Main(Star):
         now = _now_shanghai()
         if self._in_quiet_hours(now):
             fire_at = self._quiet_end_datetime(now)
+            # Do not store final alert text — flush refreshes live balance first.
             state["pending_deferred_alert"] = {
-                "text": text,
                 "fire_at": fire_at.isoformat(),
                 "created_at": now.isoformat(),
-                "balance": balance,
+                "balance_at_defer": balance,
             }
             logger.info(
-                "dorm_utility: alert deferred to %s (quiet hours)",
+                "dorm_utility: alert deferred to %s (quiet hours); balance_at_defer=%s",
                 fire_at.isoformat(),
+                balance,
             )
             return
         # clear any stale deferred and send now
@@ -1023,8 +1024,7 @@ class Main(Star):
         if not isinstance(pending, dict):
             return
         fire_raw = pending.get("fire_at")
-        text = str(pending.get("text") or "").strip()
-        if not fire_raw or not text:
+        if not fire_raw:
             state["pending_deferred_alert"] = None
             return
         try:
@@ -1040,11 +1040,47 @@ class Main(Star):
         if self._in_quiet_hours(now):
             # still quiet somehow — wait
             return
+
+        # Refresh live balance before sending (never use stale deferred text).
+        err, payload = self._fetch_dashboard_payload()
+        if err or payload is None:
+            logger.warning(
+                "dorm_utility: deferred alert refresh failed (%s); keep pending for retry",
+                err or "empty payload",
+            )
+            return
+
+        balance = extract_elec_odd(payload)
+        if balance is None:
+            logger.warning(
+                "dorm_utility: deferred alert: cannot parse balance; keep pending for retry"
+            )
+            return
+
+        self._apply_lack_balance(state, balance)
+        threshold = self._alert_threshold()
+        if balance >= threshold:
+            state["pending_deferred_alert"] = None
+            logger.info(
+                "dorm_utility: deferred alert cancelled — balance recovered to %s (>= %s)",
+                balance,
+                threshold,
+            )
+            return
+
+        text = format_alert_text(payload, balance=balance, threshold=threshold)
         n = await self._send_alert_text(text)
-        state["pending_deferred_alert"] = None
         if n:
+            state["pending_deferred_alert"] = None
             state["last_alert_at"] = now.isoformat()
-            logger.info("dorm_utility: deferred alert flushed")
+            logger.info(
+                "dorm_utility: deferred alert flushed with current balance=%s",
+                balance,
+            )
+        else:
+            logger.warning(
+                "dorm_utility: deferred alert send failed; keep pending for retry"
+            )
 
     def _should_run_scheduled_query(self, state: dict[str, Any], now: datetime) -> bool:
         lack = int(state.get("LackBalance") or 0)

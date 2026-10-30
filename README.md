@@ -59,7 +59,7 @@ wechat_robot:GroupMessage:1234567890@chatroom
 1. 每次查询（手动 `#电费` 或定时）后：余额 < `lack_balance_threshold` → `LackBalance=1`，否则 `0`
 2. `LackBalance != 1`：每天在 `daily_query_hour` 查一次；`LackBalance == 1`：每小时查一次
 3. 余额 < `alert_threshold`：向 `notify_targets` 发提醒
-4. 若提醒落在静默时段（默认 00:00–06:00）：**推迟到当天 `quiet_end_hour`**，不丢弃
+4. 若提醒落在静默时段（默认 00:00–06:00）：**推迟到当天 `quiet_end_hour`**；真正发送前会**重新查询当前电费余量**再发（余额已恢复则取消；查询失败则保留 pending 下轮重试）
 5. 状态文件：`data/plugin_data/astrbot_plugin_dorm_utility/alert_state.json`
 
 ## 指令
