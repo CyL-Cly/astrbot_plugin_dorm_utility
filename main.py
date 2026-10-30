@@ -538,24 +538,14 @@ class Main(Star):
     # ---- test push ----
 
     def _build_test_message(self) -> str:
-        """Build Chinese test text; include live snapshot when possible."""
+        """Build Chinese test text; include live elec balance when possible."""
         err, payload = self._fetch_dashboard_payload()
         if payload is not None:
-            dorm = _room_label(payload)
-            room = payload.get("room") or {}
-            overview = payload.get("overview") or {}
-            elec_odd = room.get("latestElecOdd", overview.get("todayElecOdd"))
-            return (
-                f"【水电测试】当前宿舍：{dorm}\n"
-                f"电费余量：{_as_float(elec_odd)}\n"
-                f"（测试推送，非真实告警）"
-            )
+            balance = extract_elec_odd(payload)
+            xxx = _as_float(balance) if balance is not None else "-"
+            return f"余额提醒消息测试，当前电费余量:{xxx}"
         detail = err or "凭证或宿舍未配置"
-        return (
-            "【水电测试】测试推送已触发，但未能拉取实时水电。\n"
-            f"原因：{detail}\n"
-            "（测试推送，非真实告警）"
-        )
+        return f"余额提醒消息测试，当前电费余量:未知（{detail}）"
 
     async def _clear_send_test_flag(self) -> bool:
         """Reset send_test_now to false in plugin config (file save only)."""
