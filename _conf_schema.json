@@ -1,0 +1,44 @@
+{
+  "base_url": {
+    "description": "水电 API 根地址",
+    "hint": "一般无需修改。默认 https://tools.rainfog.top/water-monitor",
+    "type": "string",
+    "default": "https://tools.rainfog.top/water-monitor"
+  },
+  "access_token": {
+    "description": "访问凭证（JWT）",
+    "hint": "Bearer JWT，不要带 Bearer 前缀。面板可随时更新。失效后用 #刷新水电凭证 或重新粘贴。",
+    "type": "string",
+    "default": ""
+  },
+  "room_pk": {
+    "description": "宿舍房间主键 roomPk",
+    "hint": "例如 1888。可用 #宿舍列表 查看已绑定房间。",
+    "type": "int",
+    "default": 1888
+  },
+  "account": {
+    "description": "学号 / 账号（可选）",
+    "hint": "用于 #刷新水电凭证 调用 /v1/auth/issue；也可仅作展示。",
+    "type": "string",
+    "default": ""
+  },
+  "cas_cookie": {
+    "description": "CAS Cookie（可选）",
+    "hint": "填了之后可发 #刷新水电凭证 换取新 token。不要提交到公开仓库。",
+    "type": "string",
+    "default": ""
+  },
+  "command_aliases": {
+    "description": "查询指令别名",
+    "hint": "逗号分隔，整句精确匹配（去首尾空白）。默认 #电费,#水电",
+    "type": "string",
+    "default": "#电费,#水电"
+  },
+  "timeout_sec": {
+    "description": "HTTP 超时（秒）",
+    "hint": "请求水电 API 的超时时间。",
+    "type": "int",
+    "default": 15
+  }
+}
