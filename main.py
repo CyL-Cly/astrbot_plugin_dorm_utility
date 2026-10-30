@@ -28,7 +28,7 @@ TEST_CMDS = ("#水电测试", "#电费测试")
 PLUGIN_NAME = "astrbot_plugin_dorm_utility"
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_FILENAME = "alert_state.json"
-PLUGIN_VERSION = "0.2.6"
+PLUGIN_VERSION = "0.2.7"
 MAX_HISTORY_DAYS = 30
 
 
@@ -172,9 +172,7 @@ def format_snapshot_day(
     water_use = overview.get("roomWater")
     return (
         f"宿舍：{dorm}\n"
-        f"电费余量：-（历史日无）\n"
         f"{elec_label}：{_as_float(elec_use)}\n"
-        f"水费余量：-（历史日无）\n"
         f"{water_label}：{_as_float(water_use)}\n"
         f"快照：{stat_date}（{_day_hint(days_ago)}）"
     )
