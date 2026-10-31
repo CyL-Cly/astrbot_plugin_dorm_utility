@@ -28,7 +28,7 @@ TEST_CMDS = ("#水电测试", "#电费测试")
 PLUGIN_NAME = "astrbot_plugin_dorm_utility"
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_FILENAME = "alert_state.json"
-PLUGIN_VERSION = "0.2.7"
+PLUGIN_VERSION = "0.2.8"
 MAX_HISTORY_DAYS = 30
 
 
@@ -592,6 +592,7 @@ class Main(Star):
             "last_hourly_slot": None,
             "pending_deferred_alert": None,
             "last_alert_at": None,
+            "low_alert_sent": False,
         }
         if not path.is_file():
             return dict(default)
@@ -1004,9 +1005,23 @@ class Main(Star):
     ) -> None:
         threshold = self._alert_threshold()
         if balance >= threshold:
-            # clear deferred if balance recovered
+            # Recovered: clear deferred and re-arm for the next low period.
             if state.get("pending_deferred_alert"):
                 state["pending_deferred_alert"] = None
+            if state.get("low_alert_sent"):
+                state["low_alert_sent"] = False
+                logger.info(
+                    "dorm_utility: low-balance alert re-armed (balance=%s >= %s)",
+                    balance,
+                    threshold,
+                )
+            return
+        # Still under threshold: only one alert per low period (recover-then-rearm).
+        if state.get("low_alert_sent"):
+            logger.debug(
+                "dorm_utility: skip alert — already sent for this low period (balance=%s)",
+                balance,
+            )
             return
         text = format_alert_text(payload, balance=balance, threshold=threshold)
         now = _now_shanghai()
@@ -1029,6 +1044,7 @@ class Main(Star):
         n = await self._send_alert_text(text)
         if n:
             state["last_alert_at"] = now.isoformat()
+            state["low_alert_sent"] = True
 
     async def _flush_deferred(self, state: dict[str, Any]) -> None:
         pending = state.get("pending_deferred_alert")
@@ -1072,8 +1088,9 @@ class Main(Star):
         threshold = self._alert_threshold()
         if balance >= threshold:
             state["pending_deferred_alert"] = None
+            state["low_alert_sent"] = False
             logger.info(
-                "dorm_utility: deferred alert cancelled — balance recovered to %s (>= %s)",
+                "dorm_utility: deferred alert cancelled — balance recovered to %s (>= %s); re-armed",
                 balance,
                 threshold,
             )
@@ -1084,6 +1101,7 @@ class Main(Star):
         if n:
             state["pending_deferred_alert"] = None
             state["last_alert_at"] = now.isoformat()
+            state["low_alert_sent"] = True
             logger.info(
                 "dorm_utility: deferred alert flushed with current balance=%s",
                 balance,
