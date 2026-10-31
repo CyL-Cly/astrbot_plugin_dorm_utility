@@ -28,7 +28,7 @@ TEST_CMDS = ("#水电测试", "#电费测试")
 PLUGIN_NAME = "astrbot_plugin_dorm_utility"
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_FILENAME = "alert_state.json"
-PLUGIN_VERSION = "0.2.8"
+PLUGIN_VERSION = "0.2.9"
 MAX_HISTORY_DAYS = 30
 
 
@@ -645,14 +645,16 @@ class Main(Star):
             return f"{what}失败：返回不是 JSON。"
         return None
 
-    def _fetch_dashboard_payload(self) -> tuple[str | None, dict[str, Any] | None]:
-        """Return (error_message, payload). One of them is set."""
+    async def _fetch_dashboard_payload(self) -> tuple[str | None, dict[str, Any] | None]:
+        """Return (error_message, payload). One of them is set. HTTP off event loop."""
         token = self._token()
         room_pk = self._room_pk()
         if not token or room_pk is None:
             return "请先在 AstrBot 面板填 access_token 和 room_pk。", None
         try:
-            status, payload = self._http_json("GET", f"/rooms/{room_pk}/dashboard")
+            status, payload = await asyncio.to_thread(
+                self._http_json, "GET", f"/rooms/{room_pk}/dashboard"
+            )
         except ConnectionError as e:
             return f"网络错误：{e}", None
         except Exception as e:
@@ -662,10 +664,10 @@ class Main(Star):
             return err, None
         return None, payload  # type: ignore[return-value]
 
-    def _fetch_snapshot_day_payload(
+    async def _fetch_snapshot_day_payload(
         self, stat_date: str
     ) -> tuple[str | None, dict[str, Any] | None]:
-        """GET /rooms/{pk}/snapshot-day?stat_date=YYYY-MM-DD"""
+        """GET /rooms/{pk}/snapshot-day?stat_date=YYYY-MM-DD. HTTP off event loop."""
         token = self._token()
         room_pk = self._room_pk()
         if not token or room_pk is None:
@@ -673,7 +675,7 @@ class Main(Star):
         qs = urllib.parse.urlencode({"stat_date": stat_date})
         path = f"/rooms/{room_pk}/snapshot-day?{qs}"
         try:
-            status, payload = self._http_json("GET", path)
+            status, payload = await asyncio.to_thread(self._http_json, "GET", path)
         except ConnectionError as e:
             return f"网络错误：{e}", None
         except Exception as e:
@@ -727,7 +729,7 @@ class Main(Star):
 
     async def _query_dashboard(self) -> tuple[str, Path | None]:
         """Today's dashboard text + optional electricity chart path."""
-        err, payload = self._fetch_dashboard_payload()
+        err, payload = await self._fetch_dashboard_payload()
         if err:
             return err, None
         assert payload is not None
@@ -739,7 +741,8 @@ class Main(Star):
         text = format_dashboard(payload)
         hourly = payload.get("hourly") or {}
         day = str(hourly.get("date") or _now_shanghai().strftime("%Y-%m-%d"))
-        chart = self._make_elec_chart(
+        chart = await asyncio.to_thread(
+            self._make_elec_chart,
             payload,
             title=f"电费用量折线（{day}）",
             tag=f"today_{day}",
@@ -755,7 +758,7 @@ class Main(Star):
         today = _now_shanghai().date()
         target: date = today - timedelta(days=days_ago)
         stat_date = target.strftime("%Y-%m-%d")
-        err, payload = self._fetch_snapshot_day_payload(stat_date)
+        err, payload = await self._fetch_snapshot_day_payload(stat_date)
         if err:
             return err, None
         assert payload is not None
@@ -764,7 +767,8 @@ class Main(Star):
             (payload.get("statDate") or (payload.get("hourly") or {}).get("date") or stat_date)
         )
         text = format_snapshot_day(payload, days_ago=days_ago, stat_date=api_date)
-        chart = self._make_elec_chart(
+        chart = await asyncio.to_thread(
+            self._make_elec_chart,
             payload,
             title=f"电费用量折线（{api_date} · {_day_hint(days_ago)}）",
             tag=f"hist_{api_date}",
@@ -776,7 +780,9 @@ class Main(Star):
         if not token:
             return "请先在 AstrBot 面板填 access_token。"
         try:
-            status, payload = self._http_json("GET", "/v1/me/rooms")
+            status, payload = await asyncio.to_thread(
+                self._http_json, "GET", "/v1/me/rooms"
+            )
         except ConnectionError as e:
             return f"网络错误：{e}"
         except Exception as e:
@@ -798,7 +804,8 @@ class Main(Star):
                 "也可以直接在面板粘贴新的 access_token。"
             )
         try:
-            status, payload = self._http_json(
+            status, payload = await asyncio.to_thread(
+                self._http_json,
                 "POST",
                 "/v1/auth/issue",
                 body={"account": account, "casCookie": cas},
@@ -845,9 +852,9 @@ class Main(Star):
 
     # ---- test push ----
 
-    def _build_test_message(self) -> str:
+    async def _build_test_message(self) -> str:
         """Build Chinese test text; include live elec balance when possible."""
-        err, payload = self._fetch_dashboard_payload()
+        err, payload = await self._fetch_dashboard_payload()
         if payload is not None:
             balance = extract_elec_odd(payload)
             xxx = _as_float(balance) if balance is not None else "-"
@@ -883,7 +890,7 @@ class Main(Star):
                 msg = "notify_targets 为空，请先在面板填写提醒目标。"
                 logger.warning("dorm_utility: test skipped — %s", msg)
                 return {"ok": False, "sent": 0, "targets": 0, "message": msg, "source": source}
-            text = self._build_test_message()
+            text = await self._build_test_message()
             sent = await self._send_alert_text(text)
             ok = sent > 0
             result = {
@@ -1069,7 +1076,7 @@ class Main(Star):
             return
 
         # Refresh live balance before sending (never use stale deferred text).
-        err, payload = self._fetch_dashboard_payload()
+        err, payload = await self._fetch_dashboard_payload()
         if err or payload is None:
             logger.warning(
                 "dorm_utility: deferred alert refresh failed (%s); keep pending for retry",
@@ -1142,7 +1149,7 @@ class Main(Star):
         return True
 
     async def _run_scheduled_query(self, state: dict[str, Any]) -> None:
-        err, payload = self._fetch_dashboard_payload()
+        err, payload = await self._fetch_dashboard_payload()
         now = _now_shanghai()
         if err:
             logger.warning("dorm_utility: scheduled query failed: %s", err)

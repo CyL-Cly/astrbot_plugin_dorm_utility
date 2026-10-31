@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.9
+
+- HTTP 与电费折线图从事件循环挪出：async 路径经 `asyncio.to_thread` 调用同步 `_http_json` / `_make_elec_chart`（避免网络卡顿堵死 AstrBot）
+
 ## 0.2.8
 
 - 余额不足提醒：低于阈值期间只推送一次；余额恢复 ≥ `alert_threshold` 后再武装（含静默推迟 flush 成功/取消路径）

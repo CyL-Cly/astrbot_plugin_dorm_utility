@@ -3,7 +3,7 @@ display_name: 宿舍水电
 desc: 微信指令查询宿舍水电（含历史与电费折线图）；定时余额不足提醒；面板/指令可一键发送测试消息。
 short_desc: 宿舍水电查询与余额提醒
 author: CyL-Cly
-version: 0.2.8
+version: 0.2.9
 repo: https://github.com/CyL-Cly/astrbot_plugin_dorm_utility
 astrbot_version: ">=4.0.0"
 support_platforms:
